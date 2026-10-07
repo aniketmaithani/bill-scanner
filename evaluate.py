@@ -16,34 +16,12 @@ import windows_compat  # noqa: F401  (must come before mlx_lm)
 from mlx_lm import generate, load
 from mlx_lm.sample_utils import make_sampler
 
-from invoice_schema import BASE, FIELDS
+from invoice_schema import ADAPTER, BASE, FIELDS, MODEL, as_number, parse_json
 
-MODEL = BASE / "models" / "Qwen2.5-1.5B-Instruct"
-ADAPTER = BASE / "adapters" / "invoice-qwen1.5b"
 TEST = BASE / "data" / "test.jsonl"
 
 SCORED = [f for f in FIELDS if f != "description"]
 NUMERIC = {"subtotal", "tax", "total"}
-
-
-def parse_json(output):
-    match = re.search(r"\{.*\}", output, re.S)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-
-
-def as_number(value):
-    if value is None or isinstance(value, (int, float)):
-        return value
-    cleaned = re.sub(r"[^\d.\-]", "", str(value))
-    try:
-        return float(cleaned)
-    except ValueError:
-        return "unparseable"
 
 
 def norm(value):

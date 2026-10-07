@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
+MODEL = BASE / "models" / "Qwen2.5-1.5B-Instruct"
+ADAPTER = BASE / "adapters" / "invoice-qwen1.5b"
 TEXT_CACHE = BASE / "work" / "text"
 LABELS = BASE / "work" / "labels_v3"
 CLASSIFICATION = BASE / "classification.csv"
@@ -144,3 +146,24 @@ def user_message(text: str) -> str:
 def to_json(record: dict) -> str:
     """Canonical compact output the student model is trained to emit."""
     return json.dumps({key: record[key] for key in FIELDS}, ensure_ascii=False)
+
+
+def parse_json(output: str):
+    """First {...} block in a model answer, or None if it is not valid JSON."""
+    match = re.search(r"\{.*\}", output, re.S)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def as_number(value):
+    if value is None or isinstance(value, (int, float)):
+        return value
+    cleaned = re.sub(r"[^\d.\-]", "", str(value))
+    try:
+        return float(cleaned)
+    except ValueError:
+        return "unparseable"
