@@ -1,97 +1,205 @@
-# Training history
+---
+title: Training
+nav_order: 5
+---
 
-How the shipped adapter (`adapters/invoice-qwen1.5b`) was produced, round by round,
-and what each round taught us. Every round was scored on the **same 26 held-out
-documents**, which were never trained on. On a set that small one document is
-worth about 4 percentage points, so treat small differences as noise.
+# How the model was trained
+{: .no_toc }
+
+The adapter in `adapters/invoice-qwen1.5b` came out of four rounds of training.
+Each round fixed one specific way the previous model was failing. This page goes
+through what changed and why, and then how to train your own.
+
+1. TOC
+{:toc}
+
+---
 
 ## Setup
 
 | | |
 |---|---|
-| Base model | `Qwen/Qwen2.5-1.5B-Instruct` (Apache 2.0) |
-| Method | LoRA, rank 16, scale 20, dropout 0.05, all layers, prompt masked |
-| Steps | 240 at batch 2 × 2 accumulation, learning rate 1e-4, AdamW |
-| Trainable parameters | 18.5M (1.2% of the model) |
-| Teacher | OpenAI `gpt-6.1-sol`, strict JSON schema output |
-| Corpus | 171 labelled bills: ~110 train, ~15 validation, 26 test |
-| Hardware | 1× H100 80 GB via `mlx[cuda13]`, about 1 minute per run (peak 20–24 GB) |
+| Base model | Qwen/Qwen2.5-1.5B-Instruct (Apache 2.0) |
+| Method | LoRA: rank 16, scale 20, dropout 0.05, all layers, loss on the answer only |
+| Steps | 240, batch size 2 with 2 accumulation steps, learning rate 1e-4, AdamW |
+| Trainable parameters | 18.5 million, about 1.2% of the model |
+| Labels | OpenAI GPT 6.1 Sol filling a strict JSON schema, then checked by script |
+| Data | 171 labelled bills: about 110 to train on, 15 to validate, 26 held back for testing |
+| Hardware | One H100 80 GB through `mlx[cuda13]`, about a minute per run |
 
-The same config also trains on an Apple Silicon Mac. An 18 GB M3 Pro is estimated
-at 20–40 minutes and is very tight on memory.
+The same config also trains on an Apple Silicon Mac. On an 18 GB M3 Pro I'd expect
+20 to 40 minutes, and memory gets tight.
 
-## Rounds
+Every round was scored on the same 26 test bills, which the model never trained
+on. With a set that small, one bill moves a number by about four points, so read
+small differences as noise.
 
-### Round 1: baseline fine-tune
-Teacher labels on raw OCR text, 119 training examples.
+## Round 1: a first fine-tune
 
-- Invoice number went from 77% to 100%, GSTIN from 62% to 92%, category from 58% to 88%.
-- **Problem:** Indian lakh-grouped numbers lost a digit (e.g. `4,12,345.00` came out as `41234`).
-- **Problem:** the teacher labelled DigitalOcean "Invoice Previews" inconsistently.
+The teacher labelled the raw OCR text and the model trained on 119 examples.
+Invoice numbers went from 77% to 100%, GSTINs from 62% to 92%, categories from
+58% to 88%.
 
-### Round 2: clean numbers and stricter rules
-- `normalize_numbers()` strips thousands separators (western and lakh) before
-  the text reaches either model. The digit-drop errors disappeared.
-- `is_invoice` is now decided by how the document titles itself. "Tax Invoice /
-  Proforma" counts as an invoice; "Statement", "Preview", "Estimate" and
-  "Quotation" do not.
-- "total" means *this document's charges*, not a running balance that includes arrears.
-- A finding: in most DigitalOcean previews the word "DigitalOcean" never appears in
-  the text (it is only in the logo), so a null vendor label is correct there.
+Two problems showed up:
 
-### Round 3: more data and better OCR
-- Added a batch of new bills, including a photographed one.
-- OCR fallback: when Tesseract's automatic layout returns under 600 characters,
-  retry with `--psm 6` and keep the longer result. This recovered a hotel bill's
-  room-rent table and improved 46 other scanned pages.
-- Fields correct on every document rose from 35% to 50%.
-- **Problem:** the model started naming the *recipient* as the vendor.
+- Indian amounts lost a digit. An amount written like `4,12,345.00` would come
+  back as `41234`. The comma grouping of lakhs breaks the number into pieces the
+  model copies badly.
+- The teacher was inconsistent about DigitalOcean "Invoice Previews", calling some
+  of them invoices and some not.
 
-### Round 4 / 4b: separate customer and vendor (shipped)
-Root cause: about 25% of the corpus is invoices the owner issued *themselves*, so
-one person's name was the most common vendor and became the model's default.
+## Round 2: cleaner input, clearer rules
 
-- New `customer` field, emitted **before** `vendor` in the JSON, so the model
-  names the addressee first.
-- Vendor = the seller (From / Supplier / the business named in the header),
-  never the Bill-To party. Use the short brand name.
-- Training capped at N examples per vendor so no vendor dominates.
-  - **N = 8 (round 4) was unstable:** with only 86 training examples the model
-    looped (`"gstin": "000000…"`) and dropped from 100% to 92% valid JSON.
-  - **N = 16 (round 4b, shipped)** kept 108 examples. Vendor accuracy reached 100%.
+- **Numbers lose their commas before either model sees them.** `normalize_numbers()`
+  turns `4,12,345.00` and `1,234,567.89` into plain digits. The dropped digit
+  problem mostly went away.
+- **A document is an invoice if it calls itself one.** "Tax Invoice / Proforma"
+  counts. "Statement", "Preview", "Estimate" and "Quotation" do not. My first
+  version of this rule said "statements are not invoices", which wrongly caught
+  AWS invoices that simply contain an account summary section.
+- **Total means this bill's charges**, not a running balance that includes old dues.
 
-| Field | Base | R3 | R4 (cap 8) | **R4b (shipped)** |
+One surprise: in most DigitalOcean previews the word "DigitalOcean" doesn't appear
+in the text at all. It's only in the logo. So a missing vendor is the right answer
+there, and the earlier model had been guessing.
+
+## Round 3: more bills, better OCR
+
+- Added a new batch of bills, including a phone photo and a scanned hotel bill.
+- **OCR retries.** When Tesseract's automatic page layout returns less than 600
+  characters, it reads the page again treating it as a single block
+  (`--psm 6`) and keeps the longer result. That recovered the hotel bill's room
+  rent table, and improved 46 other scanned pages.
+
+Bills with every field right went from 35% to 50%. But a new problem appeared: the
+model started naming the person a bill was addressed to as the vendor.
+
+## Round 4: telling customer and vendor apart
+
+About a quarter of my bills are invoices I sent to my own clients. That made my
+name the most common vendor in the training data, and the model learned to fall
+back on it.
+
+- **A new `customer` field**, written before `vendor` in the JSON. Once the model
+  has written down who the bill is addressed to, it stops reusing that name as
+  the seller.
+- **Vendor is the seller**: the From or Supplier line, or the business named in the
+  header next to its own GSTIN. Never the Bill To party. Short brand names only,
+  so "Amazon Web Services" rather than "AWS India Pvt Ltd".
+- **No vendor may dominate training.** I capped each vendor at 8 examples first.
+  That left only 86 examples and the model became unstable: it got stuck writing
+  `"gstin": "000000..."` and only 92% of answers were valid JSON. Raising the cap
+  to 16 (round 4b, the one that ships) kept 108 examples and fixed it.
+
+| Field | Untrained | Round 3 | Round 4, cap 8 | Round 4b, cap 16 |
 |---|---|---|---|---|
 | Valid JSON | 100% | 96% | 92% | **100%** |
-| is_invoice | 77% | 92% | 81% | **96%** |
-| customer | 73% | n/a | 77% | **88%** |
-| vendor | 77% | 62% | 85% | **100%** |
-| invoice_date | 88% | 88% | 92% | **100%** |
-| subtotal | 73% | 81% | 81% | **92%** |
-| total | 85% | 92% | 85% | **92%** |
-| gstin | 73% | 92% | 88% | **96%** |
-| tax | 77% | 81% | 85% | 73% |
+| Is it an invoice | 77% | 92% | 81% | **96%** |
+| Customer | 73% | n/a | 77% | **88%** |
+| Vendor | 77% | 62% | 85% | **100%** |
+| Invoice date | 88% | 88% | 92% | **100%** |
+| Subtotal | 73% | 81% | 81% | **92%** |
+| Total | 85% | 92% | 85% | **92%** |
+| GSTIN | 73% | 92% | 88% | **96%** |
+| Tax | 77% | 81% | 85% | 73% |
 
-All columns are scored against the round-4 labels. "Base" is the untrained model
-with the same prompt and number normalisation. Round 3 never learned the
-`customer` field.
+All columns are scored against the round 4 labels. "Untrained" is the base model
+with the same prompt and number cleanup. Round 3 never learned the customer field.
 
-## Lessons
+## What I learned
 
-- **Normalise the text, not just the labels.** Small models copy digits reliably
-  but not comma-grouped numbers.
-- **Write labelling rules from the document's own words** (its title), not from
-  your intent. Vague rules like "statements are not invoices" swept up real AWS
-  invoices that merely contain an account-summary section.
-- **Check teacher labels before blaming the student.** Several "errors" were
-  label inconsistencies; grounding checks (`audit_labels.py`) catch most of them.
-- **Class balance matters more than size, up to a point.** Capping the dominant
-  vendor fixed vendor confusion, but capping too hard caused degenerate loops.
-- **Leave arithmetic to code.** The model often reports one GST half (CGST only);
-  `extract_invoices.py` derives tax = total − subtotal when both are grounded in
-  the text.
-- **MLX on CUDA** needs `MLX_CUDA_GRAPH_CACHE_SIZE=8000` (variable sequence lengths
-  otherwise crash with "Cache thrashing"). With it, MLX trains at about 1,300
-  tokens/s on an H100.
-- **Foreign online-service suppliers** registered in India have GSTINs in a
-  different format, e.g. `9926USA29037OS3`. Validators must accept it.
+- **Clean the input, not just the labels.** A small model copies plain digits
+  reliably and comma-grouped numbers badly.
+- **Write labelling rules from the document's own words.** Rules about what I
+  meant ("statements aren't invoices") went wrong. Rules about what the page says
+  ("it calls itself a statement") didn't.
+- **Check the teacher before blaming the student.** Several of the model's
+  "mistakes" were inconsistent labels. `audit_labels.py` checks every label
+  against the bill text and catches most of them.
+- **Balance matters more than size, up to a point.** Capping the dominant vendor
+  fixed the vendor mix-ups. Capping too hard broke the model.
+- **Let code do the arithmetic.** The model often reports only the CGST half of
+  the tax. Calculating tax as total minus subtotal, when both are printed on the
+  bill, is more reliable than teaching it to add.
+- **MLX on CUDA needs `MLX_CUDA_GRAPH_CACHE_SIZE=8000`.** Without it, training on
+  examples of different lengths crashes with "Cache thrashing". With it, MLX
+  processes about 1,300 tokens per second on an H100.
+- **GSTINs come in two shapes.** Foreign online services registered in India get
+  numbers like `9926USA29037OS3`, and a validator that only knows the domestic
+  format throws them away.
+
+---
+
+## Retrain on your own bills
+
+Training is worth it if your bills look different from mine: mostly receipts, a
+different country's tax format, or vendors I never used. Labelling needs an OpenAI
+API key. Training needs an Apple Silicon Mac or a Linux machine with an NVIDIA GPU.
+
+**1. Collect and sort.** Put your PDFs and photos under `PDF_Collection/` and run:
+
+```bash
+python classify_bills.py
+```
+
+**2. Label with a teacher model.** Copy `.env.example` to `.env` and add your key.
+Try one bill first:
+
+```bash
+python label_with_gpt.py --limit 1
+python label_with_gpt.py
+```
+
+Only bills are sent, as extracted text. Anything that looks like a bank statement,
+tax statement, Aadhaar or passport is skipped automatically. To label a folder
+regardless of its keyword score, pass `--include-dir <folder under PDF_Collection>`.
+
+**3. Check the labels.**
+
+```bash
+python audit_labels.py
+```
+
+This writes `labels_review.csv`, with the rows that failed a check at the top.
+To make a correction stick, even if you relabel later, add it to
+`label_corrections.json`:
+
+```json
+{"<sha256 of the file>": {"total": 45657}}
+```
+
+**4. Build the dataset.**
+
+```bash
+python build_dataset.py
+```
+
+After the first build, `data/test_files.csv` pins the test bills, so later rounds
+are scored on the same set.
+
+**5. Train.** On a Mac:
+
+```bash
+python -m mlx_lm lora -c lora_config.yaml
+```
+
+On Linux with an NVIDIA GPU, install `mlx[cuda13]` and `mlx-lm` instead of the
+default requirements, then:
+
+```bash
+MLX_CUDA_GRAPH_CACHE_SIZE=8000 python -m mlx_lm lora -c lora_config.yaml
+```
+
+**6. Score it.**
+
+```bash
+python evaluate.py
+```
+
+This prints the untrained and fine-tuned accuracy side by side for every field.
+The new adapter lands in `adapters/invoice-qwen1.5b`, and `extract_invoices.py`
+uses it straight away, on every platform.
+
+A word on privacy: LoRA weights can remember pieces of what they were trained to
+output, like names and invoice numbers. If you train on private bills, keep your
+adapter private.
