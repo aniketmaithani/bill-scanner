@@ -13,7 +13,7 @@ nav_order: 2
 
 ## What you need
 
-- **Python** 3.10, 3.11 or 3.12
+- **Python** 3.10 to 3.14
 - **Tesseract**, the OCR engine used for scanned PDFs and photos
 - **Git with Git LFS**, because the model weights are stored with LFS
 - **About 4 GB of disk** for the base model and packages
@@ -44,6 +44,11 @@ Every setup below was installed from a fresh clone and run on the two
 "One bill" is the full run for a single bill, including loading the model, which
 is the slow part. Each further bill in the same run adds roughly the same time
 again minus the load.
+
+Python 3.14 was tested separately, with Python 3.14.7 on macOS (the same M3 Pro),
+on Ubuntu 24.04 and on Windows Server 2025 (both GitHub Actions runners). It
+installed from ready-made packages everywhere, with nothing to compile, and gave
+the same answers as 3.12.
 
 ---
 
@@ -99,7 +104,7 @@ your package manager and follow the rest as written.
 
 ## Windows 10 / 11
 
-1. Install **Python 3.12** from [python.org](https://www.python.org/downloads/).
+1. Install **Python** (3.10 to 3.14) from [python.org](https://www.python.org/downloads/).
    Tick "Add python.exe to PATH" on the first screen of the installer.
 2. Install **[Git for Windows](https://git-scm.com/download/win)**. Git LFS comes
    with it.
@@ -124,7 +129,7 @@ your package manager and follow the rest as written.
    git clone https://github.com/aniketmaithani/bill-scanner.git
    cd bill-scanner
 
-   py -3.12 -m venv .venv
+   py -m venv .venv
    .venv\Scripts\Activate.ps1
    pip install -r requirements.txt
 
@@ -170,6 +175,14 @@ total should read `147500`. The [Quickstart](quickstart.html) explains the outpu
   so it starts too many threads and they fight over the limit. In testing that
   made a 19 second bill take almost 7 minutes. Pin real cores instead
   (`--cpuset-cpus 0-7`) or set `OMP_NUM_THREADS` to the number of cores you have.
+
+**A photo or scanned PDF comes back `unreadable`**
+: The line above the result says why, for example
+  `warning: could not read receipt.jpg: UnidentifiedImageError: ...`. A broken or
+  truncated file is the usual reason. In one Windows test run a photo that reads
+  fine was reported unreadable once and worked on the next run, which points at
+  something briefly locking Tesseract's temporary file, such as an antivirus scan.
+  Running the file again is worth a try.
 
 **`DLL load failed` on Windows**
 : You are on the MLX code path, which only applies to Apple Silicon. Make sure you
