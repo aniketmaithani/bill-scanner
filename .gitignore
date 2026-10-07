@@ -24,3 +24,7 @@ models/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Synthetic sample bills are fine to commit
+!samples/*.pdf
+!samples/*.jpg
