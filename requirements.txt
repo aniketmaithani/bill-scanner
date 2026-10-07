@@ -1,0 +1,13 @@
+# Inference and training (Apple Silicon). On Linux + NVIDIA use "mlx[cuda13]" instead of mlx.
+mlx==0.32.3
+mlx-lm==0.32.0
+huggingface_hub<2.0
+
+# PDF text, OCR, photos
+pymupdf==1.28.2
+pytesseract==0.3.13
+pillow==12.3.0
+pillow_heif==1.8.0
+
+# Only needed to (re)label training data with a teacher model
+openai==3.26.0

@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Personal documents and everything derived from them - never commit
+PDF_Collection/
+Bills/
+Bills_Review/
+work/
+data/
+logs/
+classification.csv
+labels_review.csv
+label_corrections.json
+invoices.csv
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.heic
+
+# Base model (downloaded from Hugging Face) and local envs
+models/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
