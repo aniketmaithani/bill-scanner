@@ -201,6 +201,9 @@ def main():
             check = checks(record, text)
             if guided:
                 check = "fields filled one at a time" + ("" if check == "ok" else "; " + check)
+            for field in ("subtotal", "tax", "total"):
+                if isinstance(record[field], float) and record[field].is_integer():
+                    record[field] = int(record[field])
             row.update({field: record.get(field) for field in FIELDS})
             row["check"] = check
 
