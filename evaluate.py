@@ -12,6 +12,7 @@ import json
 import re
 import time
 
+import windows_compat  # noqa: F401  (must come before mlx_lm)
 from mlx_lm import generate, load
 from mlx_lm.sample_utils import make_sampler
 

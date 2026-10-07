@@ -22,6 +22,7 @@ import json
 import re
 from pathlib import Path
 
+import windows_compat  # noqa: F401  (must come before mlx_lm)
 from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
