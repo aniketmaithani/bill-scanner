@@ -1,0 +1,34 @@
+# Phase 4: LoRA fine-tune of Qwen2.5-1.5B-Instruct on teacher-labelled invoices.
+# Run:  .venv/bin/python -m mlx_lm lora -c lora_config.yaml
+
+model: models/Qwen2.5-1.5B-Instruct
+train: true
+data: data
+adapter_path: adapters/invoice-qwen1.5b
+fine_tune_type: lora
+
+# Only the assistant JSON contributes to the loss, not the document text
+mask_prompt: true
+
+# Longest example is ~2.9k tokens, so nothing is truncated
+max_seq_length: 3072
+grad_checkpoint: true
+
+# ~110 train examples; batch 2 x 2 accumulation, ~4 epochs
+batch_size: 2
+grad_accumulation_steps: 2
+iters: 240
+learning_rate: 1.0e-4
+optimizer: adamw
+
+num_layers: -1
+lora_parameters:
+  rank: 16
+  scale: 20.0
+  dropout: 0.05
+
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: -1
+save_every: 40
+seed: 42
