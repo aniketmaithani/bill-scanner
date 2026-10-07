@@ -54,9 +54,15 @@ python3.12 -m venv .venv
 # Base model (~3 GB). The LoRA adapter in adapters/ is applied on top.
 .venv/bin/hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir models/Qwen2.5-1.5B-Instruct
 
-# Extract every PDF / photo in a folder into a CSV
-.venv/bin/python extract_invoices.py path/to/bills -o invoices.csv
+# One bill
+.venv/bin/python extract_invoices.py path/to/bill.pdf -o bill.csv
+
+# Several files and/or folders at once (PDFs and photos)
+.venv/bin/python extract_invoices.py a.pdf receipt.jpg path/to/bills -o invoices.csv
 ```
+
+`-o` overwrites an existing file. With no arguments, everything in `Bills/` is
+written to `invoices.csv`.
 
 Supported inputs: `.pdf`, `.jpg`, `.jpeg`, `.png`, `.heic`, `.heif`, `.webp`, `.tif`, `.avif`.
 

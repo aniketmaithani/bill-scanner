@@ -7,8 +7,9 @@ Each row gets a "check" column: whether the predicted total actually appears
 in the document text, and whether subtotal + tax adds up.
 
 Usage:
-    python extract_invoices.py                 # all PDFs in Bills/
-    python extract_invoices.py some/folder -o out.csv
+    python extract_invoices.py                        # all PDFs in Bills/
+    python extract_invoices.py bill.pdf -o bill.csv   # one file
+    python extract_invoices.py a.pdf b.jpg some/folder -o out.csv
 """
 
 import argparse
@@ -59,11 +60,19 @@ def checks(record, text):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("folder", nargs="?", default=str(BASE / "Bills"))
+    parser.add_argument(
+        "inputs", nargs="*", default=[str(BASE / "Bills")],
+        help="PDF/photo files and/or folders (default: Bills/)",
+    )
     parser.add_argument("-o", "--output", default=str(BASE / "invoices.csv"))
     args = parser.parse_args()
 
-    pdfs = sorted(p for p in Path(args.folder).iterdir() if p.suffix.lower() in SUPPORTED)
+    pdfs = []
+    for item in map(Path, args.inputs):
+        found = sorted(item.iterdir()) if item.is_dir() else [item]
+        pdfs += [p for p in found if p.is_file() and p.suffix.lower() in SUPPORTED]
+    if not pdfs:
+        parser.error("no supported PDF or image files found")
     model, tokenizer = load(str(MODEL), adapter_path=str(ADAPTER))
     sampler = make_sampler(temp=0.0)
 
