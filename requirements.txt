@@ -1,6 +1,14 @@
-# Inference and training (Apple Silicon). On Linux + NVIDIA use "mlx[cuda13]" instead of mlx.
-mlx==0.32.3
-mlx-lm==0.32.0
+# Model runtime, picked per platform:
+#   Apple Silicon Macs  -> MLX on the Metal GPU
+#   everything else     -> PyTorch on the CPU
+# On Linux, install the CPU build of torch first to skip the large CUDA download:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+mlx==0.32.3; sys_platform == "darwin" and platform_machine == "arm64"
+mlx-lm==0.32.0; sys_platform == "darwin" and platform_machine == "arm64"
+torch>=2.4; sys_platform != "darwin" or platform_machine != "arm64"
+
+transformers==5.19.0
+safetensors>=0.4
 huggingface_hub<2.0
 
 # PDF text, OCR, photos

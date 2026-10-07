@@ -2,7 +2,8 @@
 """
 Extract invoice fields from PDFs with the local fine-tuned Qwen model.
 
-Fully offline: text layer or Tesseract OCR, then Qwen2.5-1.5B + LoRA adapter.
+Fully offline: text layer or Tesseract OCR, then Qwen2.5-1.5B + LoRA adapter,
+run with MLX on Apple Silicon or PyTorch on any other CPU (see backends.py).
 Each row gets a "check" column: whether the predicted total actually appears
 in the document text, and whether subtotal + tax adds up.
 
@@ -14,6 +15,7 @@ Usage:
     python extract_invoices.py                        # all PDFs in Bills/
     python extract_invoices.py bill.pdf -o bill.csv   # one file
     python extract_invoices.py a.pdf b.jpg some/folder -o out.csv
+    python extract_invoices.py bill.pdf --backend torch   # force the CPU runtime
 """
 
 import argparse
@@ -22,14 +24,19 @@ import json
 import re
 from pathlib import Path
 
-import windows_compat  # noqa: F401  (must come before mlx_lm)
-from mlx_lm import generate, load, stream_generate
-from mlx_lm.sample_utils import make_sampler
-
 from audit_labels import numbers_in
+from backends import load_backend
 from classify_bills import SUPPORTED, extract_text
-from evaluate import ADAPTER, MODEL, as_number, parse_json
-from invoice_schema import BASE, CATEGORIES, FIELDS, INSTRUCTIONS, prepare, user_message
+from invoice_schema import (
+    BASE,
+    CATEGORIES,
+    FIELDS,
+    INSTRUCTIONS,
+    as_number,
+    parse_json,
+    prepare,
+    user_message,
+)
 
 
 # Domestic GSTIN, or the OIDAR form issued to foreign online-service
@@ -113,7 +120,7 @@ def _value_end(text):
     return None
 
 
-def fill_fields(model, tokenizer, prompt, sampler):
+def fill_fields(backend, prompt):
     """
     Fallback when the free-form answer is not valid JSON: write each key
     ourselves and let the model complete only its value. The result always
@@ -123,10 +130,8 @@ def fill_fields(model, tokenizer, prompt, sampler):
     for index, field in enumerate(FIELDS):
         prefix += (", " if index else "") + json.dumps(field) + ": "
         value_text = ""
-        for response in stream_generate(
-            model, tokenizer, prompt + prefix, max_tokens=60, sampler=sampler
-        ):
-            value_text += response.text
+        for piece in backend.stream(prompt + prefix, max_tokens=60):
+            value_text += piece
             end = _value_end(value_text)
             if end is not None:
                 value_text = value_text[:end]
@@ -159,6 +164,10 @@ def main():
         help="PDF/photo files and/or folders (default: Bills/)",
     )
     parser.add_argument("-o", "--output", default=str(BASE / "invoices.csv"))
+    parser.add_argument(
+        "--backend", choices=["mlx", "torch"],
+        help="model runtime (default: mlx on Apple Silicon, torch elsewhere)",
+    )
     args = parser.parse_args()
 
     pdfs = []
@@ -167,8 +176,8 @@ def main():
         pdfs += [p for p in found if p.is_file() and p.suffix.lower() in SUPPORTED]
     if not pdfs:
         parser.error("no supported PDF or image files found")
-    model, tokenizer = load(str(MODEL), adapter_path=str(ADAPTER))
-    sampler = make_sampler(temp=0.0)
+    backend = load_backend(args.backend)
+    print(f"runtime: {backend.name}", flush=True)
 
     rows = []
     for index, pdf in enumerate(pdfs, 1):
@@ -182,14 +191,12 @@ def main():
                 {"role": "system", "content": INSTRUCTIONS},
                 {"role": "user", "content": user_message(prepare(text))},
             ]
-            prompt = tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=False
-            )
-            output = generate(model, tokenizer, prompt=prompt, max_tokens=300, sampler=sampler)
+            prompt = backend.chat_prompt(messages)
+            output = backend.generate(prompt, max_tokens=300)
             record = parse_json(output)
             guided = record is None or not set(FIELDS) <= set(record)
             if guided:
-                record = fill_fields(model, tokenizer, prompt, sampler)
+                record = fill_fields(backend, prompt)
             record = clean(record)
             check = checks(record, text)
             if guided:
