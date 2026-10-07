@@ -4,7 +4,7 @@ Point it at a folder of PDFs and phone photos. It finds the bills and pulls out
 vendor, customer, invoice number, date, subtotal, tax, total, GSTIN and category
 into a CSV. Everything runs on your own machine.
 
-**Documentation: [aniketmaithani.github.io/bill-scanner](https://aniketmaithani.github.io/bill-scanner/)**
+**Documentation: [aniketmaithani.net/bill-scanner](https://aniketmaithani.net/bill-scanner/)**
 
 Under the hood it's Tesseract for OCR and a small model, Qwen2.5-1.5B-Instruct,
 fine-tuned with LoRA on real bills. It handles Indian GST invoices (lakh-formatted
@@ -24,7 +24,7 @@ python extract_invoices.py samples/sample_gst_invoice.pdf -o result.csv
 ```
 
 That's the Mac version. Linux needs the CPU build of torch first, and Windows
-needs Tesseract added to PATH. The [installation guide](https://aniketmaithani.github.io/bill-scanner/installation.html)
+needs Tesseract added to PATH. The [installation guide](https://aniketmaithani.net/bill-scanner/installation.html)
 has the exact steps for each.
 
 ## Where it runs
@@ -46,7 +46,7 @@ model manages 73% to 88% on the same fields. Every row also gets a `check` colum
 that fixes or flags amounts that don't match what's printed on the bill.
 
 It's weaker on shop till receipts and can't read handwriting. The
-[About page](https://aniketmaithani.github.io/bill-scanner/) has the full numbers
+[About page](https://aniketmaithani.net/bill-scanner/) has the full numbers
 and the known gaps.
 
 ## What's in the repository

@@ -1,6 +1,6 @@
 title: bill-scanner
 description: Pull vendor, dates, tax and totals out of bills and invoices, on your own machine.
-url: https://aniketmaithani.github.io
+url: https://aniketmaithani.net
 baseurl: /bill-scanner
 
 remote_theme: just-the-docs/just-the-docs@v0.10.1
