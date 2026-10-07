@@ -19,6 +19,7 @@ lakh-formatted amounts, after the extractor corrects a dropped zero in the
 subtotal and works out the tax.
 
 ## A café receipt photo
+{: #a-cafe-receipt-photo }
 
 `samples/sample_cafe_receipt.jpg` is a phone photo of a till receipt: a little
 tilted, a little blurry, with some grain.
