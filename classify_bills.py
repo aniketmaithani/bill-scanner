@@ -141,6 +141,10 @@ def ocr_page(page) -> str:
     return text
 
 
+def warn(path: Path, error: Exception):
+    print(f"warning: could not read {path.name}: {type(error).__name__}: {error}", file=sys.stderr)
+
+
 def ocr_photo(path: Path) -> str:
     """Phone photos: fix rotation, greyscale, upscale small shots, boost contrast."""
     image = ImageOps.exif_transpose(Image.open(path)).convert("L")
@@ -161,12 +165,14 @@ def extract_text(path: Path):
     if path.suffix.lower() in IMAGE_SUFFIXES:
         try:
             return f"--- page 1 ---\n{ocr_photo(path)}", 1, 1, "ok"
-        except Exception:
+        except Exception as error:
+            warn(path, error)
             return "", 0, 0, "unreadable"
 
     try:
         document = fitz.open(path)
-    except Exception:
+    except Exception as error:
+        warn(path, error)
         return "", 0, 0, "unreadable"
 
     if document.needs_pass:
@@ -183,7 +189,8 @@ def extract_text(path: Path):
             try:
                 text = ocr_page(page)
                 ocr_pages += 1
-            except Exception:
+            except Exception as error:
+                warn(path, error)
                 text = ""
 
         parts.append(f"--- page {index + 1} ---\n{text}")
