@@ -6,6 +6,10 @@ Fully offline: text layer or Tesseract OCR, then Qwen2.5-1.5B + LoRA adapter.
 Each row gets a "check" column: whether the predicted total actually appears
 in the document text, and whether subtotal + tax adds up.
 
+Two safety nets sit on top of the model:
+  * amounts that lost or gained a digit are snapped to the printed amount
+  * if the answer is not valid JSON, the fields are filled one at a time
+
 Usage:
     python extract_invoices.py                        # all PDFs in Bills/
     python extract_invoices.py bill.pdf -o bill.csv   # one file
@@ -18,13 +22,13 @@ import json
 import re
 from pathlib import Path
 
-from mlx_lm import generate, load
+from mlx_lm import generate, load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
 from audit_labels import numbers_in
 from classify_bills import SUPPORTED, extract_text
 from evaluate import ADAPTER, MODEL, as_number, parse_json
-from invoice_schema import BASE, FIELDS, INSTRUCTIONS, prepare, user_message
+from invoice_schema import BASE, CATEGORIES, FIELDS, INSTRUCTIONS, prepare, user_message
 
 
 # Domestic GSTIN, or the OIDAR form issued to foreign online-service
@@ -32,15 +36,47 @@ from invoice_schema import BASE, FIELDS, INSTRUCTIONS, prepare, user_message
 GSTIN = re.compile(r"\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]|\d{4}[A-Z]{3}\d{5}[A-Z]{2}[A-Z\d]")
 
 
-def checks(record, text):
+def _digits(value):
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _one_digit_apart(a, b):
+    """True when one string is the other with a single character added."""
+    if abs(len(a) - len(b)) != 1:
+        return False
+    short, long = sorted((a, b), key=len)
+    return any(long[:i] + long[i + 1:] == short for i in range(len(long)))
+
+
+def snap_to_printed(record, numbers):
+    """
+    The model sometimes drops or repeats a zero (125000 -> 12500). Subtotal and
+    total are always printed on a bill, so if exactly one printed amount is a
+    single digit away, use it. Tax is left alone: it is often a sum that is
+    not printed anywhere, and is derived from subtotal and total instead.
+    """
     notes = []
+    for field in ("subtotal", "total"):
+        value = as_number(record.get(field))
+        if not isinstance(value, (int, float)) or round(value, 2) in numbers:
+            continue
+        near = [n for n in numbers if _one_digit_apart(_digits(value), _digits(n))]
+        if len(near) == 1:
+            record[field] = near[0]
+            notes.append(f"{field} snapped to printed amount")
+    return notes
+
+
+def checks(record, text):
+    numbers = numbers_in(text)
+    notes = snap_to_printed(record, numbers)
     gstin = record.get("gstin")
     if gstin and not GSTIN.fullmatch(str(gstin).strip()):
         record["gstin"] = None
         notes.append("invalid gstin dropped")
     total = as_number(record.get("total"))
     if isinstance(total, float) or isinstance(total, int):
-        if round(total, 2) not in numbers_in(text):
+        if round(total, 2) not in numbers:
             notes.append("total not found in text")
     else:
         notes.append("no total")
@@ -50,12 +86,69 @@ def checks(record, text):
             # The model often reports one GST half (CGST only); the difference
             # is right whenever subtotal and total are both grounded in the text
             derived = round(total - subtotal, 2)
-            if derived >= 0 and {round(subtotal, 2), round(total, 2)} <= numbers_in(text):
+            if derived >= 0 and {round(subtotal, 2), round(total, 2)} <= numbers:
                 record["tax"] = derived
                 notes.append("tax derived as total - subtotal")
             else:
                 notes.append("subtotal+tax != total")
     return "; ".join(notes) or "ok"
+
+
+def _value_end(text):
+    """Index where a JSON value ends at the top level (",", "}"), else None."""
+    in_string = escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in ",}":
+            return index
+    return None
+
+
+def fill_fields(model, tokenizer, prompt, sampler):
+    """
+    Fallback when the free-form answer is not valid JSON: write each key
+    ourselves and let the model complete only its value. The result always
+    has every field and is always well formed.
+    """
+    record, prefix = {}, "{"
+    for index, field in enumerate(FIELDS):
+        prefix += (", " if index else "") + json.dumps(field) + ": "
+        value_text = ""
+        for response in stream_generate(
+            model, tokenizer, prompt + prefix, max_tokens=60, sampler=sampler
+        ):
+            value_text += response.text
+            end = _value_end(value_text)
+            if end is not None:
+                value_text = value_text[:end]
+                break
+        try:
+            value = json.loads(value_text.strip())
+        except json.JSONDecodeError:
+            value = None
+        record[field] = value
+        prefix += json.dumps(value, ensure_ascii=False)
+    return record
+
+
+def clean(record):
+    """Coerce field types so a bad value becomes empty instead of wrong."""
+    if not isinstance(record.get("is_invoice"), bool):
+        record["is_invoice"] = None
+    for field in ("subtotal", "tax", "total"):
+        value = as_number(record.get(field))
+        record[field] = value if isinstance(value, (int, float)) else None
+    if record.get("category") not in CATEGORIES:
+        record["category"] = None
+    return record
 
 
 def main():
@@ -93,12 +186,15 @@ def main():
             )
             output = generate(model, tokenizer, prompt=prompt, max_tokens=300, sampler=sampler)
             record = parse_json(output)
-            if record is None:
-                row["check"] = "model output not JSON"
-            else:
-                check = checks(record, text)
-                row.update({field: record.get(field) for field in FIELDS})
-                row["check"] = check
+            guided = record is None or not set(FIELDS) <= set(record)
+            if guided:
+                record = fill_fields(model, tokenizer, prompt, sampler)
+            record = clean(record)
+            check = checks(record, text)
+            if guided:
+                check = "fields filled one at a time" + ("" if check == "ok" else "; " + check)
+            row.update({field: record.get(field) for field in FIELDS})
+            row["check"] = check
 
         rows.append(row)
         print(f"[{index}/{len(pdfs)}] {row['check']:<24} {pdf.name}", flush=True)
