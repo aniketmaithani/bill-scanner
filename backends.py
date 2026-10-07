@@ -101,19 +101,46 @@ class TorchBackend:
         eos = self.model.generation_config.eos_token_id
         self.stop_ids = set(eos if isinstance(eos, list) else [eos])
 
+        # KV cache of the last call. The field-by-field fallback sends the same
+        # bill again with a few more characters each time; reusing the shared
+        # prefix means the bill is read once instead of once per field.
+        self.cache, self.cached_ids = None, []
+
     def chat_prompt(self, messages):
         return self.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
 
+    def _start(self, ids):
+        """Run the prompt through the model, reusing any cached prefix."""
+        shared = 0
+        for cached, new in zip(self.cached_ids, ids):
+            if cached != new:
+                break
+            shared += 1
+        # Always feed at least one token so there are logits to read
+        shared = min(shared, len(ids) - 1)
+        if self.cache is not None and shared > 0:
+            extra = len(self.cached_ids) - shared
+            if extra:
+                self.cache.crop(-extra)
+        else:
+            self.cache, shared = None, 0
+        output = self.model(
+            input_ids=self.torch.tensor([ids[shared:]]),
+            past_key_values=self.cache,
+            use_cache=True,
+        )
+        self.cache, self.cached_ids = output.past_key_values, list(ids)
+        return output
+
     def stream(self, prompt, max_tokens):
         torch = self.torch
-        input_ids = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False).input_ids
-        past, tokens, emitted = None, [], ""
+        ids = self.tokenizer(prompt, add_special_tokens=False).input_ids
+        tokens, emitted = [], ""
         with torch.inference_mode():
+            output = self._start(ids)
             for _ in range(max_tokens):
-                output = self.model(input_ids=input_ids, past_key_values=past, use_cache=True)
-                past = output.past_key_values
                 token = int(output.logits[0, -1].argmax())
                 if token in self.stop_ids:
                     break
@@ -121,7 +148,13 @@ class TorchBackend:
                 text = self.tokenizer.decode(tokens, skip_special_tokens=True)
                 yield text[len(emitted):]
                 emitted = text
-                input_ids = torch.tensor([[token]])
+                output = self.model(
+                    input_ids=torch.tensor([[token]]),
+                    past_key_values=self.cache,
+                    use_cache=True,
+                )
+                self.cache = output.past_key_values
+                self.cached_ids.append(token)
 
     def generate(self, prompt, max_tokens):
         return "".join(self.stream(prompt, max_tokens))
