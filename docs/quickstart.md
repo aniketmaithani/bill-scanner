@@ -36,7 +36,8 @@ runtime: mlx
 wrote 2 rows to samples.csv
 ```
 
-`runtime` says `torch` on Linux and Windows. The first run takes a little longer
+`runtime` says `torch` on Linux and Windows, or `llamacpp` if you followed the
+[4 GB setup](installation.html#windows-with-4-gb-of-ram). The first run takes a little longer
 while the model loads.
 
 ## Read the result

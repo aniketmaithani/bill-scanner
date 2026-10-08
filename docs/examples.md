@@ -148,3 +148,7 @@ python extract_invoices.py samples/sample_gst_invoice.pdf --backend torch -o cpu
 ```
 
 `--backend mlx` only works on Apple Silicon.
+
+`--backend llamacpp` uses the 8-bit model through a running `llama-server`. It
+needs about 2 GB of RAM instead of 6 GB. [Installation](installation.html#windows-with-4-gb-of-ram)
+has the setup.

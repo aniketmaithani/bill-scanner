@@ -3,7 +3,8 @@
 Extract invoice fields from PDFs with the local fine-tuned Qwen model.
 
 Fully offline: text layer or Tesseract OCR, then Qwen2.5-1.5B + LoRA adapter,
-run with MLX on Apple Silicon or PyTorch on any other CPU (see backends.py).
+run with MLX on Apple Silicon, PyTorch on any other CPU, or llama.cpp on
+low-memory machines (see backends.py).
 Each row gets a "check" column: whether the predicted total actually appears
 in the document text, and whether subtotal + tax adds up.
 
@@ -16,6 +17,7 @@ Usage:
     python extract_invoices.py bill.pdf -o bill.csv   # one file
     python extract_invoices.py a.pdf b.jpg some/folder -o out.csv
     python extract_invoices.py bill.pdf --backend torch   # force the CPU runtime
+    python extract_invoices.py bill.pdf --backend llamacpp   # use a running llama-server
 """
 
 import argparse
@@ -165,8 +167,9 @@ def main():
     )
     parser.add_argument("-o", "--output", default=str(BASE / "invoices.csv"))
     parser.add_argument(
-        "--backend", choices=["mlx", "torch"],
-        help="model runtime (default: mlx on Apple Silicon, torch elsewhere)",
+        "--backend", choices=["mlx", "torch", "llamacpp"],
+        help="model runtime (default: mlx on Apple Silicon, torch elsewhere; "
+        "llamacpp needs a running llama-server)",
     )
     args = parser.parse_args()
 

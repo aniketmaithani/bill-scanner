@@ -7,18 +7,28 @@ torch  Everything else (Linux, Windows, Intel Macs), on the CPU. Loads the
        same base model with transformers and folds the LoRA adapter into its
        weights once at startup, so the answers match the MLX runtime.
 
+llamacpp
+       Low-memory machines (4 GB Windows laptops). Talks to a llama-server
+       that is already running the merged, 8-bit GGUF model, so it needs no
+       PyTorch and about a quarter of the memory. Only used when asked for.
+
 MLX can also run on a plain CPU, but its CPU backend needs several minutes
 per bill, which is why other machines use PyTorch.
 
-Both runtimes decode greedily and expose the same two calls:
+All runtimes decode greedily and expose the same two calls:
     generate(prompt, max_tokens) -> str
     stream(prompt, max_tokens)   -> iterator of text pieces
 """
 
 import json
+import os
 import platform
+import urllib.error
+import urllib.request
 
 from invoice_schema import ADAPTER, MODEL
+
+LLAMA_SERVER = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
 
 
 def default_backend():
@@ -32,6 +42,8 @@ def load_backend(name=None):
         return MLXBackend()
     if name == "torch":
         return TorchBackend()
+    if name == "llamacpp":
+        return LlamaCppBackend()
     raise ValueError(f"unknown backend: {name}")
 
 
@@ -158,3 +170,53 @@ class TorchBackend:
 
     def generate(self, prompt, max_tokens):
         return "".join(self.stream(prompt, max_tokens))
+
+
+class LlamaCppBackend:
+    name = "llamacpp"
+
+    def __init__(self, url=LLAMA_SERVER):
+        self.url = url.rstrip("/")
+        try:
+            urllib.request.urlopen(self.url + "/health", timeout=5).close()
+        except (urllib.error.URLError, OSError) as error:
+            raise SystemExit(
+                f"no llama-server at {self.url} ({error}). Start it first, e.g.\n"
+                "  llama-server -m invoice-qwen1.5b-q8_0.gguf -c 4096 --port 8080\n"
+                "or point LLAMA_SERVER_URL at where it runs."
+            ) from None
+
+    def _post(self, path, body):
+        request = urllib.request.Request(
+            self.url + path, json.dumps(body).encode(),
+            {"Content-Type": "application/json"},
+        )
+        return urllib.request.urlopen(request)
+
+    def chat_prompt(self, messages):
+        # The chat template is stored in the GGUF file itself
+        with self._post("/apply-template", {"messages": messages}) as response:
+            return json.load(response)["prompt"]
+
+    def _completion(self, prompt, max_tokens, stream):
+        # cache_prompt lets the server reuse the shared prefix, like the KV
+        # cache in TorchBackend, when the field-by-field fallback runs
+        return self._post("/completion", {
+            "prompt": prompt, "n_predict": max_tokens, "temperature": 0,
+            "cache_prompt": True, "stream": stream,
+        })
+
+    def stream(self, prompt, max_tokens):
+        with self._completion(prompt, max_tokens, stream=True) as response:
+            for line in response:
+                if not line.startswith(b"data: "):
+                    continue
+                piece = json.loads(line[len(b"data: "):])
+                if piece.get("content"):
+                    yield piece["content"]
+                if piece.get("stop"):
+                    break
+
+    def generate(self, prompt, max_tokens):
+        with self._completion(prompt, max_tokens, stream=False) as response:
+            return json.load(response)["content"]

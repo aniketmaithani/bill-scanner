@@ -27,6 +27,11 @@ That's the Mac version. Linux needs the CPU build of torch first, and Windows
 needs Tesseract added to PATH. The [installation guide](https://aniketmaithani.net/bill-scanner/installation.html)
 has the exact steps for each.
 
+Only 4 GB of RAM? Download the
+[8-bit model](https://huggingface.co/aniketmaithani/bill-scanner-invoice-qwen1.5b-GGUF)
+and run it with llama.cpp instead. It needs about 2 GB. The guide has a
+[Windows walkthrough](https://aniketmaithani.net/bill-scanner/installation.html#windows-with-4-gb-of-ram).
+
 ## Where it runs
 
 | Machine | Runtime | One bill, including model load |
@@ -55,7 +60,7 @@ and the known gaps.
 |---|---|
 | `extract_invoices.py` | Reads bills and writes the CSV. This is the one you'll use. |
 | `classify_bills.py` | Finds the bills in a big mixed folder of PDFs |
-| `backends.py` | Runs the model with MLX or PyTorch |
+| `backends.py` | Runs the model with MLX, PyTorch or a llama.cpp server |
 | `invoice_schema.py` | The prompt, fields, categories and text cleanup, shared by everything |
 | `label_with_gpt.py`, `audit_labels.py`, `build_dataset.py`, `evaluate.py` | Labelling, checking, dataset building and scoring, for retraining |
 | `lora_config.yaml` | Training settings |

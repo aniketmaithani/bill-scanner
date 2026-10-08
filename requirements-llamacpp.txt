@@ -1,0 +1,9 @@
+# For the llama.cpp runtime only (low-memory Windows machines).
+# The model runs inside llama-server, so torch, transformers and the
+# 3 GB base model are not needed. See docs/installation.md.
+
+# PDF text, OCR, photos
+pymupdf==1.28.2
+pytesseract==0.3.13
+pillow==12.3.0
+pillow_heif==1.8.0
